@@ -10,11 +10,11 @@ export async function identifyCustomer(req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Fetch existing contacts from the database
+    // Fetch all matching contacts
     const existingContacts: Contact[] = await findContact(email, phoneNumber);
 
     if (existingContacts.length === 0) {
-      // Create a new primary contact if no existing contact is found
+      // No matching contacts, create a new primary contact
       const newContact = await createContact({
         email,
         phoneNumber,
@@ -22,7 +22,7 @@ export async function identifyCustomer(req: Request, res: Response): Promise<voi
       });
       res.status(200).json({
         contact: {
-          primaryContatctId: newContact.id,
+          primaryContactId: newContact.id,
           emails: [newContact.email],
           phoneNumbers: [newContact.phoneNumber],
           secondaryContactIds: [],
@@ -31,29 +31,37 @@ export async function identifyCustomer(req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Identify the primary contact
-    let primaryContact: Contact =
-      existingContacts.find((c: Contact) => c.linkPrecedence === "primary") || existingContacts[0];
+    // Identify the primary contact (earliest createdAt)
+    let primaryContact = existingContacts.reduce((primary, contact) => {
+      const primaryCreatedAt = primary.createdAt ?? new Date(0); // Fallback to epoch
+      const contactCreatedAt = contact.createdAt ?? new Date(0);
+      return contactCreatedAt < primaryCreatedAt ? contact : primary;
+    });
 
-    // Update secondary contacts
+    // Update all other contacts to secondary
     for (const contact of existingContacts) {
-      if (contact.id !== primaryContact.id && contact.linkPrecedence === "primary") {
+      if (contact.id !== primaryContact.id) {
         await updateContact(contact.id!, primaryContact.id!);
       }
     }
 
-    // Filter secondary contacts
-    const secondaryContacts: Contact[] = existingContacts.filter(
-      (c: Contact) => c.id !== primaryContact.id
-    );
+    // Consolidate emails, phoneNumbers, and secondaryContactIds
+    const emails = [
+      ...new Set(existingContacts.map((c) => c.email).filter(Boolean)),
+    ];
+    const phoneNumbers = [
+      ...new Set(existingContacts.map((c) => c.phoneNumber).filter(Boolean)),
+    ];
+    const secondaryContactIds = existingContacts
+      .filter((c) => c.id !== primaryContact.id)
+      .map((c) => c.id!);
 
-    // Respond with consolidated contact information
     res.status(200).json({
       contact: {
-        primaryContatctId: primaryContact.id!,
-        emails: [...new Set(existingContacts.map((c: Contact) => c.email).filter(Boolean))],
-        phoneNumbers: [...new Set(existingContacts.map((c: Contact) => c.phoneNumber).filter(Boolean))],
-        secondaryContactIds: secondaryContacts.map((c: Contact) => c.id!),
+        primaryContactId: primaryContact.id!,
+        emails,
+        phoneNumbers,
+        secondaryContactIds,
       },
     });
   } catch (error) {
